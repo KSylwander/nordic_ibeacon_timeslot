@@ -23,13 +23,7 @@
 // Value used as error code on stack dump, can be used to identify stack location on stack unwind.
 #define DEAD_BEEF                       0xDEADBEEF
 
-// Shorter advertising interval is supported in Bluetooth 5
-#define BLUETOOTH5                      0
-#if BLUETOOTH5
-#define NON_CONNECTABLE_ADV_INTERVAL    MSEC_TO_UNITS(20, UNIT_0_625_MS)
-#else
 #define NON_CONNECTABLE_ADV_INTERVAL    MSEC_TO_UNITS(100, UNIT_0_625_MS)
-#endif
 
 // Beacon advertisement contents
 #define APP_BEACON_INFO_LENGTH          0x17 // Total length of information advertised by the iBeacon
@@ -46,15 +40,6 @@
 #define MIN_MINOR                       1
 #define MAX_MINOR                       20
 
-// Length of advertisement pulses
-#define DURATION_TO_ADVERTISE_MSECS     3000
-
-// Pauses between advertisements, enough to let devices go back to sleep
-#define DURATION_BETWEEN_ADV_MSECS      20000
-
-// Number of iterations
-#define NUM_ITERATIONS                  100
-
 static ble_gap_adv_params_t m_adv_params;
 static uint8_t              m_advertising = 0;
 static uint16_t             m_minor = 0;
@@ -68,14 +53,6 @@ static uint8_t              m_beacon_info[APP_BEACON_INFO_LENGTH] = {
         APP_MEASURED_RSSI
 };
 static ble_advdata_manuf_data_t m_manuf_specific_data;
-
-APP_TIMER_DEF(m_advertising_stop_timer);
-APP_TIMER_DEF(m_auto_mode_timer);
-static uint8_t m_auto_mode = 0;
-static int m_iterations = 0;
-
-//static void start_auto_mode();
-//static void stop_auto_mode();
 
 void assert_nrf_callback(uint16_t line_num, const uint8_t *p_file_name) {
     app_error_handler(DEAD_BEEF, line_num, p_file_name);
@@ -122,37 +99,14 @@ static void advertising_stop(void) {
     NRF_LOG_INFO("... stopped advertising");
 }
 
-static void advertising_stop_timer_handler(void* p_context) {
-    m_advertising = 0;
-    advertising_stop();
-}
-
 static void advertising_start(void) {
     ret_code_t err_code;
 
-    NRF_LOG_INFO("Starting to advertise at %d ticks for %d ms...", NON_CONNECTABLE_ADV_INTERVAL, DURATION_TO_ADVERTISE_MSECS);
+    NRF_LOG_INFO("Starting to advertise at %d ticks", NON_CONNECTABLE_ADV_INTERVAL);
     err_code = sd_ble_gap_adv_start(&m_adv_params, APP_BLE_CONN_CFG_TAG);
     APP_ERROR_CHECK(err_code);
 
-    m_iterations++;
     bsp_indication_set(BSP_INDICATE_ALERT_2);
-}
-
-static void advertising_start_timer_handler(void* p_context) {
-    if (m_iterations < NUM_ITERATIONS) {
-        if (!m_advertising) {
-            m_advertising = 1;
-            m_minor++;
-            ret_code_t err_code = sd_ble_gap_addr_set((const ble_gap_addr_t *) (&m_addr));
-            APP_ERROR_CHECK(err_code);
-            if (m_minor > MAX_MINOR) {
-                m_minor = MIN_MINOR;
-            }
-            NRF_LOG_INFO("Rotating minor to: %d", m_minor);
-            advertising_init(); // reinitialize to cycle minor
-            advertising_start();
-        }
-    }
 }
 
 static void ble_stack_init(void) {
@@ -189,12 +143,12 @@ static void log_init(void) {
 static void bsp_event_callback(bsp_event_t bsp_event) {
     switch (bsp_event) {
         case BSP_EVENT_KEY_0:
-            if (!m_auto_mode) {
-                m_auto_mode = 1;
+            if (!m_advertising) {
+                m_advertising = 1;
                 bsp_board_led_on(1);
                 advertising_start();
             } else {
-                m_auto_mode = 0;
+                m_advertising = 0;
                 bsp_board_led_on(0);
                 advertising_stop();
             }
@@ -214,11 +168,6 @@ static void init_bsp(void) {
 
 static void timer_init(void) {
     ret_code_t err_code = app_timer_init();
-    APP_ERROR_CHECK(err_code);
-
-    err_code = app_timer_create(&m_auto_mode_timer, APP_TIMER_MODE_REPEATED, advertising_start_timer_handler);
-    APP_ERROR_CHECK(err_code);
-    err_code = app_timer_create(&m_advertising_stop_timer, APP_TIMER_MODE_SINGLE_SHOT, advertising_stop_timer_handler);
     APP_ERROR_CHECK(err_code);
 }
 
